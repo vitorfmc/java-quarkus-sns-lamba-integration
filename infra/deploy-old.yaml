@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: 'Stack to create SNS+LAMBDA for Service Integration Test'
+
+Parameters:
+  Stage:
+    Type: 'String'
+    Default: 'dev'
+    AllowedValues:
+      - 'dev'
+      - 'hml'
+      - 'prd'
+    Description: ''
+
+Mappings:
+  Network:
+    securityGroupIds:
+      dev: 'sg-03b8285c'
+      hml: 'sg-y'
+      prd: 'sg-z'
+    subnetIds:
+      dev: 'subnet-283e1074'
+      hml: 'subnet-...'
+      prd: 'subnet-...'
+    allowedIp:
+      dev: 0.0.0.0/0
+      hml: 0.0.0.0/0
+      prd: 0.0.0.0/0
+
+Resources:
+
+  ################################################################################
+  # 1. IAM ROLE FOR LAMBDA                                                       #
+  ################################################################################
+  BooksAPILambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "BooksAPILambdaRole-${Stage}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AmazonSNSFullAccess
+
+  ################################################################################
+  # 2. LAMBDA FUNCTION                                                           #
+  ################################################################################
+  BooksAPILambdaFunction:
+    Type: 'AWS::Serverless::Function'
+    DependsOn: BooksAPILambdaRole
+    Properties:
+      FunctionName: !Sub 'books-api-lambda-${Stage}'
+      Description: 'Call Google Books API'
+      Handler: not.used.in.provided.runtime
+      Runtime: provided
+      CodeUri: ../build/function.zip
+      MemorySize: 256
+      Timeout: 30
+      Policies: AWSLambdaVPCAccessExecutionRole
+      AutoPublishAlias: !Ref Stage
+      Role: !GetAtt BooksAPILambdaRole.Arn
+      Environment:
+        Variables:
+          DISABLE_SIGNAL_HANDLERS: true
+ #     VpcConfig:
+ #       SecurityGroupIds: !Split [',', !FindInMap ['Network', 'securityGroupIds', !Ref 'Stage']]
+ #       SubnetIds: !Split [',', !FindInMap ['Network', 'subnetIds', !Ref 'Stage']]
+
+  ################################################################################
+  # 3. LAMBDA LOGGROUP ON CLOUDWATCH                                             #
+  ################################################################################
+
+  BooksAPILambdaFunctionLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    DependsOn: 'BooksAPILambdaFunction'
+    Properties:
+      LogGroupName: !Join ["", ["/aws/lambda/", !Ref BooksAPILambdaFunction]]
+      RetentionInDays: 14
+
+  ################################################################################
+  # 4. SNS                                                                       #
+  ################################################################################
+  BooksApiSnsTopic:
+    Type: 'AWS::SNS::Topic'
+    DependsOn:
+      - BooksAPILambdaFunction
+    Properties:
+      TopicName: !Sub "BooksApiSnsTopic-${Stage}"
+      Subscription:
+        - Endpoint: !GetAtt BooksAPILambdaFunction.Arn
+          Protocol: "lambda"

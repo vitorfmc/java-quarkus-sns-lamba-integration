@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Stack to create SNS+LAMBDA for Service Integration Test
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+    - dev
+    - hml
+    - prd
+    Description: ''
+Mappings:
+  Network:
+    securityGroupIds:
+      dev: sg-03b8285c
+      hml: sg-y
+      prd: sg-z
+    subnetIds:
+      dev: subnet-283e1074
+      hml: subnet-...
+      prd: subnet-...
+    allowedIp:
+      dev: '0.0.0.0/0'
+      hml: '0.0.0.0/0'
+      prd: '0.0.0.0/0'
+Resources:
+  BooksAPILambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: BooksAPILambdaRole-${Stage}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      - arn:aws:iam::aws:policy/AmazonSNSFullAccess
+  BooksAPILambdaFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: BooksAPILambdaRole
+    Properties:
+      FunctionName:
+        Fn::Sub: books-api-lambda-${Stage}
+      Description: Call Google Books API
+      Handler: not.used.in.provided.runtime
+      Runtime: provided
+      CodeUri: s3://rovit-apps-deploy/e94d652535d6d36147df5e4a99f26e6b
+      MemorySize: 256
+      Timeout: 30
+      Policies: AWSLambdaVPCAccessExecutionRole
+      AutoPublishAlias:
+        Ref: Stage
+      Role:
+        Fn::GetAtt:
+        - BooksAPILambdaRole
+        - Arn
+      Environment:
+        Variables:
+          DISABLE_SIGNAL_HANDLERS: true
+  BooksAPILambdaFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: BooksAPILambdaFunction
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ''
+        - - /aws/lambda/
+          - Ref: BooksAPILambdaFunction
+      RetentionInDays: 14
+  BooksApiSnsTopic:
+    Type: AWS::SNS::Topic
+    DependsOn:
+    - BooksAPILambdaFunction
+    Properties:
+      TopicName:
+        Fn::Sub: BooksApiSnsTopic-${Stage}
+      Subscription:
+      - Endpoint:
+          Fn::GetAtt:
+          - BooksAPILambdaFunction
+          - Arn
+        Protocol: lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+    - BooksAPILambdaFunction
+    - BooksApiSnsTopic
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn:
+        Ref: BooksApiSnsTopic
+      FunctionName:
+        Ref: BooksAPILambdaFunction
